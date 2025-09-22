@@ -5,8 +5,106 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Excel"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        Title="Сравнение калькуляций" Height="600" Width="1100">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0"
+                   Text="Выберите два Excel файла с калькуляциями. Программа сравнит значения и сформирует таблицу различий." />
 
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0"
+                       VerticalAlignment="Center"
+                       Margin="0,0,12,0"
+                       Text="Первый файл:" />
+
+            <TextBox Grid.Column="1"
+                     Text="{Binding FirstFilePath, UpdateSourceTrigger=PropertyChanged}"
+                     IsReadOnly="True"
+                     VerticalContentAlignment="Center"
+                     Margin="0,0,12,0" />
+
+            <Button Grid.Column="2" Content="Обзор..." Width="120" Click="BrowseFirstFile_Click" />
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0"
+                       VerticalAlignment="Center"
+                       Margin="0,0,12,0"
+                       Text="Второй файл:" />
+
+            <TextBox Grid.Column="1"
+                     Text="{Binding SecondFilePath, UpdateSourceTrigger=PropertyChanged}"
+                     IsReadOnly="True"
+                     VerticalContentAlignment="Center"
+                     Margin="0,0,12,0" />
+
+            <Button Grid.Column="2" Content="Обзор..." Width="120" Click="BrowseSecondFile_Click" />
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,16,0,16">
+            <Button Content="Сравнить" Width="140" Click="CompareButton_Click" />
+            <Button Content="Сохранить результат" Width="190" Margin="12,0,0,0" Click="ExportButton_Click"
+                    IsEnabled="{Binding HasResults}" />
+        </StackPanel>
+
+        <DataGrid Grid.Row="4"
+                  ItemsSource="{Binding DiffRowsView}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  Margin="0,0,0,12"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  ColumnWidth="SizeToCells">
+            <DataGrid.Resources>
+                <Style x:Key="RightAlignedCell" TargetType="TextBlock">
+                    <Setter Property="HorizontalAlignment" Value="Right" />
+                </Style>
+            </DataGrid.Resources>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Позиция" Binding="{Binding Item}" />
+                <DataGridTextColumn Header="Кол-во (старое)" Binding="{Binding OldQuantity, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Кол-во (новое)" Binding="{Binding NewQuantity, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Δ Кол-во" Binding="{Binding QuantityDelta, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Цена (старая)" Binding="{Binding OldPrice, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Цена (новая)" Binding="{Binding NewPrice, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Δ Цена" Binding="{Binding PriceDelta, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Сумма (старая)" Binding="{Binding OldAmount, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Сумма (новая)" Binding="{Binding NewAmount, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Δ Сумма" Binding="{Binding AmountDelta, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+                <DataGridTextColumn Header="Статус" Binding="{Binding StatusText}" />
+            </DataGrid.Columns>
+            <DataGrid.GroupStyle>
+                <GroupStyle>
+                    <GroupStyle.HeaderTemplate>
+                        <DataTemplate>
+                            <Border Background="#FFEFEFEF" Padding="8" Margin="0,8,0,0">
+                                <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                            </Border>
+                        </DataTemplate>
+                    </GroupStyle.HeaderTemplate>
+                </GroupStyle>
+            </DataGrid.GroupStyle>
+        </DataGrid>
+
+        <TextBlock Grid.Row="5" Text="{Binding StatusMessage}" />
     </Grid>
 </Window>
