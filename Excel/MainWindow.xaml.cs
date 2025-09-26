@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Data;
 using ClosedXML.Excel;
 using Microsoft.Win32;
+using System.Text.RegularExpressions;
 
 namespace Excel
 {
@@ -22,10 +23,19 @@ namespace Excel
         };
 
         private const string DefaultProductName = "Без указания продукции";
+        private const decimal AmountChangeThresholdPercent = 5m;
+
+        private static readonly Regex RomanNumeralPrefixRegex = new("^[IVXLCDM]+\\.", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly string[] ExcludedLabelPrefixes =
+        {
+            "итого",
+            "в т.ч."
+        };
 
         private string? _firstFilePath;
         private string? _secondFilePath;
         private string _statusMessage = "Выберите файлы и нажмите \"Сравнить\".";
+        private IReadOnlyDictionary<string, ProductSummary> _productSummaries = new Dictionary<string, ProductSummary>(StringComparer.OrdinalIgnoreCase);
 
         public MainWindow()
         {
@@ -34,6 +44,7 @@ namespace Excel
             DiffRowsView = CollectionViewSource.GetDefaultView(DiffRows);
             DiffRowsView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(DiffRow.Product)));
             DiffRows.CollectionChanged += (_, __) => OnPropertyChanged(nameof(HasResults));
+            ProductSummaries = new Dictionary<string, ProductSummary>(StringComparer.OrdinalIgnoreCase);
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -41,6 +52,18 @@ namespace Excel
         public ObservableCollection<DiffRow> DiffRows { get; } = new();
 
         public ICollectionView DiffRowsView { get; }
+        public IReadOnlyDictionary<string, ProductSummary> ProductSummaries
+        {
+            get => _productSummaries;
+            private set
+            {
+                if (!ReferenceEquals(_productSummaries, value))
+                {
+                    _productSummaries = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
 
         public string? FirstFilePath
         {
@@ -114,7 +137,23 @@ namespace Excel
                 StatusMessage = "Выполняется сравнение...";
                 var firstRows = LoadExcelRows(FirstFilePath);
                 var secondRows = LoadExcelRows(SecondFilePath);
-                var differences = BuildDifferences(firstRows, secondRows);
+                var summaries = CalculateProductSummaries(firstRows, secondRows);
+                var visibleProducts = new HashSet<string>(
+                    summaries
+                        .Where(kvp => kvp.Value.ShouldDisplay(AmountChangeThresholdPercent))
+                        .Select(kvp => kvp.Key),
+                    StringComparer.OrdinalIgnoreCase);
+
+                var differences = BuildDifferences(firstRows, secondRows)
+                    .Where(row => visibleProducts.Contains(row.Product))
+                    .ToList();
+
+                ProductSummaries = visibleProducts.Count == 0
+                    ? new Dictionary<string, ProductSummary>(StringComparer.OrdinalIgnoreCase)
+                    : visibleProducts.ToDictionary(
+                        product => product,
+                        product => summaries[product],
+                        StringComparer.OrdinalIgnoreCase);
 
                 DiffRows.Clear();
                 foreach (var row in differences)
@@ -179,6 +218,7 @@ namespace Excel
                     "Сумма (старая)",
                     "Сумма (новая)",
                     "Δ Сумма",
+                    "Δ %",
                     "Статус"
                 };
 
@@ -187,7 +227,12 @@ namespace Excel
                     worksheet.Cell(1, i + 1).Value = headers[i];
                     worksheet.Cell(1, i + 1).Style.Font.Bold = true;
                 }
+                for (var column = 2; column <= 10; column++)
+                {
+                    worksheet.Column(column).Style.NumberFormat.Format = "0.00";
+                }
 
+                worksheet.Column(11).Style.NumberFormat.Format = "0.00\\%";
                 var rowIndex = 2;
                 string? currentProduct = null;
 
@@ -201,11 +246,21 @@ namespace Excel
                         }
 
                         currentProduct = diff.Product;
-                        var headerRange = worksheet.Range(rowIndex, 1, rowIndex, headers.Length);
-                        headerRange.Merge();
-                        headerRange.Value = currentProduct;
-                        headerRange.Style.Font.Bold = true;
-                        headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#EFEFEF");
+                        var summaryRange = worksheet.Range(rowIndex, 1, rowIndex, headers.Length);
+                        summaryRange.Style.Font.Bold = true;
+                        summaryRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#EFEFEF");
+
+                        var nameRange = worksheet.Range(rowIndex, 1, rowIndex, 7);
+                        nameRange.Merge();
+                        nameRange.Value = currentProduct;
+
+                        if (ProductSummaries.TryGetValue(currentProduct, out var summary))
+                        {
+                            worksheet.Cell(rowIndex, 8).Value = summary.OldAmount;
+                            worksheet.Cell(rowIndex, 9).Value = summary.NewAmount;
+                            worksheet.Cell(rowIndex, 10).Value = summary.AmountDelta;
+                            worksheet.Cell(rowIndex, 11).Value = summary.AmountDeltaPercent;
+                        }
                         rowIndex++;
                     }
 
@@ -219,7 +274,8 @@ namespace Excel
                     worksheet.Cell(rowIndex, 8).Value = diff.OldAmount;
                     worksheet.Cell(rowIndex, 9).Value = diff.NewAmount;
                     worksheet.Cell(rowIndex, 10).Value = diff.AmountDelta;
-                    worksheet.Cell(rowIndex, 11).Value = diff.StatusText;
+                    worksheet.Cell(rowIndex, 11).Value = diff.AmountDeltaPercent;
+                    worksheet.Cell(rowIndex, 12).Value = diff.StatusText;
                     rowIndex++;
                 }
 
@@ -239,7 +295,37 @@ namespace Excel
         {
             Filter = "Excel файлы (*.xlsx;*.xlsm;*.xltx;*.xltm)|*.xlsx;*.xlsm;*.xltx;*.xltm|Все файлы (*.*)|*.*"
         };
+        private static IReadOnlyDictionary<string, ProductSummary> CalculateProductSummaries(List<ExcelRow> firstRows, List<ExcelRow> secondRows)
+        {
+            var products = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in firstRows)
+            {
+                products.Add(row.Product);
+            }
 
+            foreach (var row in secondRows)
+            {
+                products.Add(row.Product);
+            }
+
+            var result = new Dictionary<string, ProductSummary>(StringComparer.OrdinalIgnoreCase);
+            foreach (var product in products)
+            {
+                var oldAmount = SumAmounts(firstRows, product);
+                var newAmount = SumAmounts(secondRows, product);
+                result[product] = new ProductSummary(product, oldAmount, newAmount);
+            }
+
+            return result;
+        }
+
+        private static decimal SumAmounts(IEnumerable<ExcelRow> rows, string product)
+        {
+            return rows
+                .Where(r => string.Equals(r.Product, product, StringComparison.OrdinalIgnoreCase))
+                .Where(r => !ShouldExcludeRow(r.BaseLabel))
+                .Sum(r => r.Amount ?? 0m);
+        }
         private static List<DiffRow> BuildDifferences(List<ExcelRow> firstRows, List<ExcelRow> secondRows)
         {
             var result = new List<DiffRow>();
@@ -308,7 +394,10 @@ namespace Excel
                     {
                         var firstRow = firstRowsForKey != null && i < firstRowsForKey.Count ? firstRowsForKey[i] : null;
                         var secondRow = secondRowsForKey != null && i < secondRowsForKey.Count ? secondRowsForKey[i] : null;
-
+                        if (ShouldExcludeRow(firstRow?.BaseLabel ?? secondRow?.BaseLabel ?? key))
+                        {
+                            continue;
+                        }
                         var display = firstRow?.DisplayLabel ?? secondRow?.DisplayLabel ?? (i == 0 ? key : $"{key} ({i + 1})");
                         result.Add(new DiffRow(product, display, firstRow, secondRow));
                     }
@@ -317,7 +406,31 @@ namespace Excel
 
             return result;
         }
+        private static bool ShouldExcludeRow(string? label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+            {
+                return false;
+            }
 
+            var trimmed = label.Trim();
+            var lower = trimmed.ToLowerInvariant();
+
+            if (lower.Contains("итого"))
+            {
+                return true;
+            }
+
+            foreach (var prefix in ExcludedLabelPrefixes)
+            {
+                if (lower.StartsWith(prefix))
+                {
+                    return true;
+                }
+            }
+
+            return RomanNumeralPrefixRegex.IsMatch(trimmed) && trimmed.Contains(':');
+        }
         private static List<ExcelRow> LoadExcelRows(string path)
         {
             var rows = new List<ExcelRow>();
@@ -538,16 +651,17 @@ namespace Excel
         {
             Product = product;
             Item = item;
-            OldQuantity = oldRow?.Quantity;
-            NewQuantity = newRow?.Quantity;
-            OldPrice = oldRow?.Price;
-            NewPrice = newRow?.Price;
-            OldAmount = oldRow?.Amount;
-            NewAmount = newRow?.Amount;
+            OldQuantity = DecimalHelper.Round2(oldRow?.Quantity);
+            NewQuantity = DecimalHelper.Round2(newRow?.Quantity);
+            OldPrice = DecimalHelper.Round2(oldRow?.Price);
+            NewPrice = DecimalHelper.Round2(newRow?.Price);
+            OldAmount = DecimalHelper.Round2(oldRow?.Amount);
+            NewAmount = DecimalHelper.Round2(newRow?.Amount);
 
             QuantityDelta = CalculateDelta(NewQuantity, OldQuantity);
             PriceDelta = CalculateDelta(NewPrice, OldPrice);
             AmountDelta = CalculateDelta(NewAmount, OldAmount);
+            AmountDeltaPercent = DecimalHelper.CalculatePercentChange(NewAmount, OldAmount);
 
             Status = oldRow == null && newRow != null
                 ? DiffStatus.Added
@@ -569,6 +683,7 @@ namespace Excel
         public decimal? OldAmount { get; }
         public decimal? NewAmount { get; }
         public decimal? AmountDelta { get; }
+        public decimal? AmountDeltaPercent { get; }
         public DiffStatus Status { get; }
         public string StatusText => Status switch
         {
@@ -591,7 +706,7 @@ namespace Excel
         {
             if (newValue.HasValue && oldValue.HasValue)
             {
-                return newValue.Value - oldValue.Value;
+                return DecimalHelper.Round2(newValue.Value - oldValue.Value);
             }
 
             return null;
@@ -609,7 +724,7 @@ namespace Excel
                 return false;
             }
 
-            return Math.Abs(left.Value - right.Value) < 0.0001m;
+            return DecimalHelper.IsEffectivelyZero(left.Value - right.Value);
         }
     }
 

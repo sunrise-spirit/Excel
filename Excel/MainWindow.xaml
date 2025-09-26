@@ -78,6 +78,7 @@
                 <Style x:Key="RightAlignedCell" TargetType="TextBlock">
                     <Setter Property="HorizontalAlignment" Value="Right" />
                 </Style>
+                <local:ProductSummaryConverter x:Key="ProductSummaryConverter" />
             </DataGrid.Resources>
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Позиция" Binding="{Binding Item}" />
@@ -90,6 +91,8 @@
                 <DataGridTextColumn Header="Сумма (старая)" Binding="{Binding OldAmount, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
                 <DataGridTextColumn Header="Сумма (новая)" Binding="{Binding NewAmount, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
                 <DataGridTextColumn Header="Δ Сумма" Binding="{Binding AmountDelta, StringFormat={}{0:N2}}" ElementStyle="{StaticResource RightAlignedCell}" />
+
+                <DataGridTextColumn Header="Δ %" Binding="{Binding AmountDeltaPercent, StringFormat={}{0:N2}%}" ElementStyle="{StaticResource RightAlignedCell}" />
                 <DataGridTextColumn Header="Статус" Binding="{Binding StatusText}" />
             </DataGrid.Columns>
             <DataGrid.GroupStyle>
@@ -97,7 +100,21 @@
                     <GroupStyle.HeaderTemplate>
                         <DataTemplate>
                             <Border Background="#FFEFEFEF" Padding="8" Margin="0,8,0,0">
-                                <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                                    <TextBlock Grid.Column="1" Margin="12,0,0,0" FontWeight="Bold">
+                                        <TextBlock.Text>
+                                            <MultiBinding Converter="{StaticResource ProductSummaryConverter}">
+                                                <Binding Path="Name" />
+                                                <Binding Path="DataContext.ProductSummaries" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                            </MultiBinding>
+                                        </TextBlock.Text>
+                                    </TextBlock>
+                                </Grid>
                             </Border>
                         </DataTemplate>
                     </GroupStyle.HeaderTemplate>
